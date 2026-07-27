@@ -12,7 +12,7 @@ archive-index ~/Books --output archive-index.html
 archive-index example.cbz --format json
 ```
 
-Directory scans continue past corrupt archives and report each error. HTML output is self-contained, searchable, responsive, and escapes archive-supplied filenames. Existing reports are never replaced.
+Directory scans continue past corrupt archives and report each error. Version 1.1 adds archive SHA-256 fingerprints, per-member compression ratios, duplicate-member warnings, extension totals, and the ten largest entries. HTML output is self-contained, searchable, responsive, and escapes archive-supplied filenames. Existing reports are never replaced.
 
 ## Security boundary
 
