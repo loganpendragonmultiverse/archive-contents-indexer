@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=78", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "archive-contents-indexer"
+version = "1.0.0"
+description = "Build searchable static indexes of ZIP, CBZ, and EPUB contents without extraction."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Logan Pendragon Multiverse" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["build>=1.3,<2", "pytest>=8,<10", "pytest-cov>=6,<8", "ruff>=0.11,<1"]
+
+[project.scripts]
+archive-index = "archive_contents_indexer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.coverage.run]
+omit = ["src/*/__main__.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=archive_contents_indexer --cov-branch --cov-report=term-missing --cov-fail-under=90"
