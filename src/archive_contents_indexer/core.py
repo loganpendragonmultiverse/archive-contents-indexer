@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
 import zipfile
+from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -27,18 +29,25 @@ def inspect_archive(path: Path) -> dict[str, Any]:
                     "name": info.filename,
                     "size": info.file_size,
                     "compressed_size": info.compress_size,
+                    "compression_ratio": round(info.compress_size / info.file_size, 3)
+                    if info.file_size
+                    else 0,
                     "directory": info.is_dir(),
                     "encrypted": bool(info.flag_bits & 1),
                     "unsafe_path": unsafe_member(info.filename),
                     "crc32": f"{info.CRC:08x}",
                 }
             )
+    names = [str(item["name"]) for item in entries]
     return {
         "path": path.name,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "entries": entries,
         "entry_count": len(entries),
         "uncompressed_bytes": sum(item["size"] for item in entries),
         "unsafe_paths": sum(item["unsafe_path"] for item in entries),
+        "duplicate_names": sorted(name for name, count in Counter(names).items() if count > 1),
+        "compressed_bytes": sum(item["compressed_size"] for item in entries),
     }
 
 
@@ -60,12 +69,26 @@ def build_index(source: Path) -> dict[str, Any]:
             archives.append(inspect_archive(path))
         except (OSError, zipfile.BadZipFile) as exc:
             errors.append({"path": path.name, "error": str(exc)})
+    all_entries = [
+        {"archive": archive["path"], "name": item["name"], "size": item["size"]}
+        for archive in archives
+        for item in archive["entries"]
+        if not item["directory"]
+    ]
+    extension_counts = Counter(
+        PurePosixPath(str(item["name"])).suffix.casefold() or "[no extension]"
+        for item in all_entries
+    )
     return {
         "version": 1,
         "archive_count": len(archives),
         "error_count": len(errors),
         "archives": archives,
         "errors": errors,
+        "extension_counts": dict(sorted(extension_counts.items())),
+        "largest_entries": sorted(
+            all_entries, key=lambda item: (-int(item["size"]), item["archive"], item["name"])
+        )[:10],
     }
 
 
