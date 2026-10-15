@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from .core import build_index, render_html, render_json
+from .core import build_index, compare_indexes, render_html, render_json
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -14,9 +15,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("source", type=Path)
     parser.add_argument("--format", choices=("html", "json"), default="html")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--compare", type=Path, help="Prior JSON inventory to compare")
     args = parser.parse_args(argv)
     try:
         index = build_index(args.source)
+        if args.compare:
+            previous = json.loads(args.compare.read_text(encoding="utf-8"))
+            index["comparison"] = compare_indexes(previous, index)
         rendered = render_json(index) if args.format == "json" else render_html(index)
         if args.output:
             if args.output.exists():
@@ -24,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
             args.output.write_text(rendered, encoding="utf-8")
         else:
             sys.stdout.write(rendered)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 1 if index["error_count"] else 0

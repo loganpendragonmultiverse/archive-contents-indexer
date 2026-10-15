@@ -21,3 +21,26 @@ The tool reads archive metadata with Python's ZIP parser and does not extract me
 Requires Python 3.10 or newer. Development checks use Ruff, pytest with branch coverage, and package builds.
 
 Part of the [Logan Pendragon Forge open-source collection](https://www.loganpendragonforge.com/open-source/). Licensed under the [MIT License](LICENSE).
+
+## Compare inventories (1.2)
+
+Save a JSON inventory, then compare a later scan:
+    archive-index ~/Books --format json --output before.json
+    archive-index ~/Books --compare before.json --output changes.html
+
+Comparison reports added/removed archives, changed fingerprints, member additions,
+removals, and changed metadata fields. Members are identified by name and their
+one-based occurrence among that name in stored ZIP order. Inserting/reordering
+duplicate names can therefore produce occurrence changes, not inferred renames.
+Directory inventories now use source-relative archive paths so nested equal
+basenames remain distinct. Compare scans of the same source layout. Older
+basename-only inventories work for flat layouts; ambiguous duplicate paths are
+rejected rather than guessed. Corrupt-archive paths in either snapshot are unknown,
+never confidently added or removed. Missing source roots fail with an error.
+CRC and size equality do not establish member content identity. This comparison
+does not decompress members, infer renames, certify integrity, or alter archives.
+
+Unreadable directory discovery is recorded with scope: discovery in errors.
+Comparisons mark affected known archives unknown, report unknown_subtrees, and
+remain incomplete even when a failed subtree contains no previously known archive.
+Readable subtrees still produce changes. Directory symlinks are not traversed.
