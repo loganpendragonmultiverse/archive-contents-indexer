@@ -66,9 +66,16 @@ def build_index(source: Path) -> dict[str, Any]:
     errors: list[dict[str, str]] = []
     for path in paths:
         try:
-            archives.append(inspect_archive(path))
+            item = inspect_archive(path)
+            item["path"] = path.relative_to(source).as_posix() if source.is_dir() else path.name
+            archives.append(item)
         except (OSError, zipfile.BadZipFile) as exc:
-            errors.append({"path": path.name, "error": str(exc)})
+            errors.append(
+                {
+                    "path": path.relative_to(source).as_posix() if source.is_dir() else path.name,
+                    "error": str(exc),
+                }
+            )
     all_entries = [
         {"archive": archive["path"], "name": item["name"], "size": item["size"]}
         for archive in archives
@@ -89,6 +96,105 @@ def build_index(source: Path) -> dict[str, Any]:
         "largest_entries": sorted(
             all_entries, key=lambda item: (-int(item["size"]), item["archive"], item["name"])
         )[:10],
+    }
+
+
+def compare_indexes(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    """Compare inventory metadata; member content equality is not established."""
+
+    def unpack(index: dict[str, Any]) -> tuple[dict[str, Any], set[str]]:
+        if not isinstance(index, dict) or index.get("version") != 1:
+            raise ValueError("comparison requires a version 1 JSON inventory")
+        archives, errors = index.get("archives"), index.get("errors")
+        if not isinstance(archives, list) or not isinstance(errors, list):
+            raise TypeError("inventory requires archives and errors arrays")
+        mapped = {}
+        failed = set()
+        for item in errors:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                raise TypeError("inventory errors require paths")
+            failed.add(item["path"])
+        for archive in archives:
+            if not isinstance(archive, dict) or not isinstance(archive.get("path"), str):
+                raise TypeError("inventory archives require paths")
+            path = archive["path"]
+            if path in mapped or path in failed:
+                raise ValueError("ambiguous archive paths in inventory")
+            if not isinstance(archive.get("entries"), list):
+                raise TypeError("inventory archive requires entries")
+            members = {}
+            counts: Counter[str] = Counter()
+            for entry in archive["entries"]:
+                if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+                    raise TypeError("inventory entries require names")
+                if not all(
+                    key in entry
+                    for key in (
+                        "size",
+                        "compressed_size",
+                        "crc32",
+                        "directory",
+                        "encrypted",
+                        "unsafe_path",
+                    )
+                ):
+                    raise ValueError("incomplete member metadata")
+                name = entry["name"]
+                counts[name] += 1
+                members[(name, counts[name])] = entry
+            mapped[path] = {"archive": archive, "members": members}
+        return mapped, failed
+
+    before, old_errors = unpack(previous)
+    after, new_errors = unpack(current)
+    unknown = old_errors | new_errors
+    changes = []
+    for path in sorted(before.keys() & after.keys() - unknown):
+        old, new = before[path], after[path]
+        a, b = old["members"], new["members"]
+        added = [
+            {"name": name, "occurrence": occurrence}
+            for name, occurrence in sorted(b.keys() - a.keys())
+        ]
+        removed = [
+            {"name": name, "occurrence": occurrence}
+            for name, occurrence in sorted(a.keys() - b.keys())
+        ]
+        modified = []
+        for key in sorted(a.keys() & b.keys()):
+            fields = sorted(
+                field
+                for field in a[key].keys() | b[key].keys()
+                if a[key].get(field) != b[key].get(field)
+            )
+            if fields:
+                modified.append(
+                    {
+                        "name": key[0],
+                        "occurrence": key[1],
+                        "fields": fields,
+                        "before": a[key],
+                        "after": b[key],
+                    }
+                )
+        fingerprint_changed = old["archive"].get("sha256") != new["archive"].get("sha256")
+        if added or removed or modified or fingerprint_changed:
+            changes.append(
+                {
+                    "path": path,
+                    "fingerprint_changed": fingerprint_changed,
+                    "members_added": added,
+                    "members_removed": removed,
+                    "members_changed": modified,
+                }
+            )
+    return {
+        "archives_added": sorted(after.keys() - before.keys() - unknown),
+        "archives_removed": sorted(before.keys() - after.keys() - unknown),
+        "archives_changed": changes,
+        "unknown_archives": sorted(unknown),
+        "complete": not unknown,
+        "interpretation": "Metadata comparison only; CRC and size equality do not prove member content identity.",
     }
 
 
@@ -115,7 +221,14 @@ def render_html(index: dict[str, Any]) -> str:
         f"<li>{html.escape(item['path'])}: {html.escape(item['error'])}</li>"
         for item in index["errors"]
     )
-    return f"""<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Archive contents index</title><style>body{{font:16px system-ui;margin:0;padding:24px;color:#18211d}}main{{max-width:1100px;margin:auto}}input{{width:100%;padding:12px;margin:16px 0;box-sizing:border-box}}table{{width:100%;border-collapse:collapse}}th,td{{padding:9px;border:1px solid;text-align:left}}th{{background:#e7ece8}}@media(max-width:700px){{table{{font-size:12px}}}}</style><main><h1>Archive Contents Index</h1><p>{index["archive_count"]} archives · {sum(a["entry_count"] for a in index["archives"])} entries · {index["error_count"]} errors</p><label>Filter entries <input id=q type=search></label><table><thead><tr><th>Archive</th><th>Entry</th><th>Bytes</th><th>Flags</th></tr></thead><tbody>{"".join(rows)}</tbody></table><ul>{error_rows}</ul></main><script>const q=document.querySelector('#q');q.addEventListener('input',()=>{{for(const row of document.querySelectorAll('tbody tr'))row.hidden=!row.textContent.toLowerCase().includes(q.value.toLowerCase())}})</script></html>\n"""
+    comparison = (
+        "<h2>Inventory comparison</h2><pre>"
+        + html.escape(json.dumps(index["comparison"], indent=2, ensure_ascii=False))
+        + "</pre>"
+        if "comparison" in index
+        else ""
+    )
+    return f"""<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Archive contents index</title><style>body{{font:16px system-ui;margin:0;padding:24px;color:#18211d}}main{{max-width:1100px;margin:auto}}input{{width:100%;padding:12px;margin:16px 0;box-sizing:border-box}}table{{width:100%;border-collapse:collapse}}th,td{{padding:9px;border:1px solid;text-align:left}}th{{background:#e7ece8}}@media(max-width:700px){{table{{font-size:12px}}}}</style><main><h1>Archive Contents Index</h1><p>{index["archive_count"]} archives · {sum(a["entry_count"] for a in index["archives"])} entries · {index["error_count"]} errors</p><label>Filter entries <input id=q type=search></label><table><thead><tr><th>Archive</th><th>Entry</th><th>Bytes</th><th>Flags</th></tr></thead><tbody>{"".join(rows)}</tbody></table><ul>{error_rows}</ul>{comparison}</main><script>const q=document.querySelector('#q');q.addEventListener('input',()=>{{for(const row of document.querySelectorAll('tbody tr'))row.hidden=!row.textContent.toLowerCase().includes(q.value.toLowerCase())}})</script></html>\n"""
 
 
 def render_json(index: dict[str, Any]) -> str:

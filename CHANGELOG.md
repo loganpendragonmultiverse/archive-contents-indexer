@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.0 — 2026-10-15
+
+- Compare prior JSON inventories with archive and occurrence-aware member changes.
+- Preserve source-relative archive identities and show corrupt scans as unknown.
+
 ## 1.1.0 - 2026-07-27
 
 - Added archive SHA-256 fingerprints, compression ratios, compressed totals, and duplicate-member reporting.
