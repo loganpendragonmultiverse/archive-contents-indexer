@@ -3,6 +3,7 @@
 ## 1.2.0 — 2026-10-15
 
 - Compare prior JSON inventories with archive and occurrence-aware member changes.
+- Record directory discovery errors and suppress removal claims for unreadable subtrees.
 - Preserve source-relative archive identities and show corrupt scans as unknown.
 
 ## 1.1.0 - 2026-07-27

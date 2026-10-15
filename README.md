@@ -39,3 +39,8 @@ rejected rather than guessed. Corrupt-archive paths in either snapshot are unkno
 never confidently added or removed. Missing source roots fail with an error.
 CRC and size equality do not establish member content identity. This comparison
 does not decompress members, infer renames, certify integrity, or alter archives.
+
+Unreadable directory discovery is recorded with scope: discovery in errors.
+Comparisons mark affected known archives unknown, report unknown_subtrees, and
+remain incomplete even when a failed subtree contains no previously known archive.
+Readable subtrees still produce changes. Directory symlinks are not traversed.

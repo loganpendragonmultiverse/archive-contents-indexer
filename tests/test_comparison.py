@@ -96,3 +96,72 @@ def test_cli_compare_and_missing_input(tmp_path, capsys):
     previous.write_text("{")
     assert main([str(path), "--compare", str(previous)]) == 2
     assert main([str(tmp_path / "missing"), "--compare", str(previous)]) == 2
+
+
+def test_unreadable_subtree_never_implies_removal(tmp_path, monkeypatch):
+    import os
+
+    write(tmp_path / "sub" / "book.zip", [("x", "x")])
+    write(tmp_path / "readable.zip", [("x", "before")])
+    before = build_index(tmp_path)
+    write(tmp_path / "readable.zip", [("x", "after")])
+    original = os.scandir
+
+    def denied(path):
+        if path == tmp_path / "sub":
+            raise PermissionError("fixture")
+        return original(path)
+
+    monkeypatch.setattr(os, "scandir", denied)
+    after = build_index(tmp_path)
+    assert not after["scan_complete"]
+    diff = compare_indexes(before, after)
+    assert not diff["complete"] and diff["archives_removed"] == []
+    assert diff["unknown_archives"] == ["sub/book.zip"]
+    assert diff["unknown_subtrees"] == ["sub"]
+    assert [a["path"] for a in diff["archives_changed"]] == ["readable.zip"]
+    reverse = compare_indexes(after, before)
+    assert reverse["archives_added"] == [] and not reverse["complete"]
+
+
+def test_root_enumeration_failure_and_symlink_loop(tmp_path, monkeypatch):
+    import os
+
+    original = os.scandir
+
+    def denied(path):
+        raise PermissionError("fixture")
+
+    monkeypatch.setattr(os, "scandir", denied)
+    report = build_index(tmp_path)
+    diff = compare_indexes(report, report)
+    assert diff["unknown_subtrees"] == ["."] and not diff["complete"]
+    monkeypatch.setattr(os, "scandir", original)
+    link = tmp_path / "loop"
+    try:
+        link.symlink_to(tmp_path, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    assert build_index(tmp_path)["scan_complete"]
+
+
+def test_entry_stat_failure_records_uncertainty(tmp_path, monkeypatch):
+    import os
+
+    class Entry:
+        name = "missing.zip"
+
+        def is_dir(self, **kwargs):
+            raise PermissionError("fixture")
+
+    class Scan:
+        def __enter__(self):
+            return iter([Entry()])
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(os, "scandir", lambda path: Scan())
+    report = build_index(tmp_path)
+    assert report["errors"][0]["scope"] == "discovery"
+    assert not compare_indexes(report, report)["complete"]

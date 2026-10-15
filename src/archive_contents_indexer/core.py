@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
 import re
 import zipfile
 from collections import Counter
@@ -52,18 +53,45 @@ def inspect_archive(path: Path) -> dict[str, Any]:
 
 
 def build_index(source: Path) -> dict[str, Any]:
+    errors: list[dict[str, str]] = []
+    directory_source = source.is_dir()
     if source.is_file():
         paths = [source]
-    elif source.is_dir():
-        paths = sorted(
-            path
-            for path in source.rglob("*")
-            if path.is_file() and path.suffix.casefold() in EXTENSIONS
-        )
+    elif directory_source:
+        paths = []
+        pending = [source]
+        while pending:
+            directory = pending.pop()
+            try:
+                with os.scandir(directory) as iterator:
+                    entries = sorted(iterator, key=lambda entry: entry.name)
+                for entry in entries:
+                    path = directory / entry.name
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(path)
+                        elif entry.is_file() and path.suffix.casefold() in EXTENSIONS:
+                            paths.append(path)
+                    except OSError as exc:
+                        errors.append(
+                            {
+                                "path": path.relative_to(source).as_posix(),
+                                "error": type(exc).__name__,
+                                "scope": "discovery",
+                            }
+                        )
+            except OSError as exc:
+                errors.append(
+                    {
+                        "path": directory.relative_to(source).as_posix(),
+                        "error": type(exc).__name__,
+                        "scope": "discovery",
+                    }
+                )
+        paths.sort()
     else:
         raise ValueError("source must be an archive or directory")
     archives: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
     for path in paths:
         try:
             item = inspect_archive(path)
@@ -90,6 +118,7 @@ def build_index(source: Path) -> dict[str, Any]:
         "version": 1,
         "archive_count": len(archives),
         "error_count": len(errors),
+        "scan_complete": not errors,
         "archives": archives,
         "errors": errors,
         "extension_counts": dict(sorted(extension_counts.items())),
@@ -102,7 +131,7 @@ def build_index(source: Path) -> dict[str, Any]:
 def compare_indexes(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     """Compare inventory metadata; member content equality is not established."""
 
-    def unpack(index: dict[str, Any]) -> tuple[dict[str, Any], set[str]]:
+    def unpack(index: dict[str, Any]) -> tuple[dict[str, Any], set[str], set[str]]:
         if not isinstance(index, dict) or index.get("version") != 1:
             raise ValueError("comparison requires a version 1 JSON inventory")
         archives, errors = index.get("archives"), index.get("errors")
@@ -110,10 +139,14 @@ def compare_indexes(previous: dict[str, Any], current: dict[str, Any]) -> dict[s
             raise TypeError("inventory requires archives and errors arrays")
         mapped = {}
         failed = set()
+        undiscovered = set()
         for item in errors:
             if not isinstance(item, dict) or not isinstance(item.get("path"), str):
                 raise TypeError("inventory errors require paths")
-            failed.add(item["path"])
+            if item.get("scope") == "discovery":
+                undiscovered.add(item["path"])
+            else:
+                failed.add(item["path"])
         for archive in archives:
             if not isinstance(archive, dict) or not isinstance(archive.get("path"), str):
                 raise TypeError("inventory archives require paths")
@@ -143,11 +176,25 @@ def compare_indexes(previous: dict[str, Any], current: dict[str, Any]) -> dict[s
                 counts[name] += 1
                 members[(name, counts[name])] = entry
             mapped[path] = {"archive": archive, "members": members}
-        return mapped, failed
+        return mapped, failed, undiscovered
 
-    before, old_errors = unpack(previous)
-    after, new_errors = unpack(current)
-    unknown = old_errors | new_errors
+    before, old_errors, old_discovery = unpack(previous)
+    after, new_errors, new_discovery = unpack(current)
+    unknown_subtrees = old_discovery | new_discovery
+    unknown = (
+        old_errors
+        | new_errors
+        | {
+            path
+            for path in before.keys() | after.keys()
+            if any(
+                prefix == "."
+                or path == prefix
+                or PurePosixPath(prefix) in PurePosixPath(path).parents
+                for prefix in unknown_subtrees
+            )
+        }
+    )
     changes = []
     for path in sorted(before.keys() & after.keys() - unknown):
         old, new = before[path], after[path]
@@ -193,7 +240,8 @@ def compare_indexes(previous: dict[str, Any], current: dict[str, Any]) -> dict[s
         "archives_removed": sorted(before.keys() - after.keys() - unknown),
         "archives_changed": changes,
         "unknown_archives": sorted(unknown),
-        "complete": not unknown,
+        "unknown_subtrees": sorted(unknown_subtrees),
+        "complete": not unknown and not unknown_subtrees,
         "interpretation": "Metadata comparison only; CRC and size equality do not prove member content identity.",
     }
 
