@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1 — 2026-10-20
+
+- Create reports exclusively so concurrent files and dangling symbolic links cannot be overwritten.
+- Hash archives in bounded chunks instead of reading the full archive into memory.
+- Reject malformed comparison metadata, including boolean sizes, invalid CRCs and non-finite ratios.
+- Wrap long archive/member names and comparison evidence without losing searchable text on narrow screens.
+- Document source and installed-distribution acceptance checks.
+
 ## 1.2.0 — 2026-10-15
 
 - Compare prior JSON inventories with archive and occurrence-aware member changes.
