@@ -24,6 +24,8 @@ def main(argv: list[str] | None = None) -> int:
             index["comparison"] = compare_indexes(previous, index)
         rendered = render_json(index) if args.format == "json" else render_html(index)
         if args.output:
+            if args.output.exists() or args.output.is_symlink():
+                raise ValueError(f"output already exists: {args.output}")
             with args.output.open("x", encoding="utf-8") as stream:
                 stream.write(rendered)
         else:
