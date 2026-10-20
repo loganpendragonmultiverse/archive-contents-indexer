@@ -44,3 +44,13 @@ Unreadable directory discovery is recorded with scope: discovery in errors.
 Comparisons mark affected known archives unknown, report unknown_subtrees, and
 remain incomplete even when a failed subtree contains no previously known archive.
 Readable subtrees still produce changes. Directory symlinks are not traversed.
+
+## Report safety and comparison validation
+
+Report creation is exclusive: an existing destination, including a dangling symbolic
+link or a file created during the scan, causes exit status 2 and is preserved.
+Archive fingerprints use one MiB read chunks; ZIP directory metadata is still held
+in memory, so use trusted, reasonably sized archives. Comparison inputs must retain
+non-negative integer sizes, boolean flags, valid CRC values and finite compression
+ratios. Legacy inventories without SHA-256 fingerprints remain metadata-only
+comparisons. See [TESTING.md](TESTING.md) for reproducible checks.
